@@ -1,6 +1,7 @@
 #include "unp.h"
 #include "cli.h"
 #include <stdbool.h>
+#include <stdio.h>
 
 struct sockaddr_in sockaddr_setup(short family, int port, int addr) {
     struct sockaddr_in serv_addr;
@@ -27,6 +28,7 @@ int main(int argc, char** argv) {
     printf("Connected to server at %s:%s\n", argv[1], argv[2]);
 
     char input[MAXLINE], recvline[MAXLINE];
+    char command[10], username[50], password[50];
     while (1) {
         // Display menu
         printf("\nMenu:\n");
@@ -46,11 +48,11 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        char command[10], username[50], password[50];
         bzero(&command, 10);
         bzero(&username, 50);
         bzero(&password, 50);
         sscanf(input, "%s %s %s", command, username, password);
+        printf("Command: %s, Username: %s, Password: %s\n", command, username, password);
 
         // Send command to server
         Writen(sock_fd, input, strlen(input));
@@ -58,7 +60,12 @@ int main(int argc, char** argv) {
 
         // Read server response
         bzero(&recvline, MAXLINE);
-        Read(sock_fd, recvline, MAXLINE);
+        int n = read(sock_fd, recvline, MAXLINE);
+        if (n <= 0) {
+            printf("Server terminated prematurely\n");
+            close(sock_fd);
+            return -1;
+        }
         if (strcmp(recvline, "1") == 0) {
             printf("Invalid command format!\n");
             continue;
@@ -87,14 +94,19 @@ int main(int argc, char** argv) {
             printf("Invalid command code!\n");
             continue;
         }
+        else {
+            printf("Invalid response from server: %s\n", recvline);
+            continue;
+        }
     }
-    Lobby(sock_fd);
+
+    Lobby(sock_fd, username);
     // Close socket
     close(sock_fd);
     return 0;
 }
 
-int Lobby(int sock_fd) {
+int Lobby(int sock_fd, const char* username) {
     char input[MAXLINE], sendline[MAXLINE];
     while(true) {
         printf("\nNow, You can enter a game room\n");
@@ -111,14 +123,21 @@ int Lobby(int sock_fd) {
             bzero(&sendline, MAXLINE);
             sprintf(sendline, "1");
             Write(sock_fd, sendline, sizeof(sendline));
-            // NewRoom(sock_fd);
+            int newRoomResult = NewRoom(sock_fd, username);
+            if (newRoomResult == -1) {
+                continue;
+            }
+            else if(newRoomResult == 0) { Game(sock_fd); }
+            else { printf("Server error\n"); return 0;}
             // break;
         } else if (strcmp(input, "2\n") == 0) {
             printf("Join Room\n");
             bzero(&sendline, MAXLINE);
             sprintf(sendline, "2");
             Write(sock_fd, sendline, sizeof(sendline));
-            // JoinRoom(sock_fd);
+            int joinRoomResult = JoinRoom(sock_fd, username);
+            if (joinRoomResult == -1) continue;
+            else if (joinRoomResult == 0) { Game(sock_fd); }
             // break;
         } else if (strcmp(input, "3\n") == 0) {
             printf("Exit\n");
@@ -130,4 +149,105 @@ int Lobby(int sock_fd) {
             printf("Invalid command\n");
         }
     }
+}
+
+int NewRoom(int sock_fd, const char* username) {
+    char input[MAXLINE], sendline[MAXLINE], recvline[MAXLINE];
+    char RoomName[50];
+    int RoomCapacity;
+    char isPublic;
+    while(true) {
+        fflush(stdin);
+        printf("\nNew Room Setup:\n");
+        printf("1. Set Room Name:\n");
+        fgets(RoomName, 50, stdin);
+        printf("2. Set Room Capacity (6~10)\n");
+        scanf("%d", &RoomCapacity); getchar();
+        printf("3. Set Room to Public? (T/F)\n");
+        scanf("%c", &isPublic); getchar();
+
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "%s %d %c", RoomName, RoomCapacity, isPublic);
+        Write(sock_fd, sendline, sizeof(sendline));
+        
+        bzero(&recvline, MAXLINE);
+        Read(sock_fd, recvline, MAXLINE);
+        printf("Server response: %s\n", recvline);
+        if (atoi(recvline) > 0 && atoi(recvline) < 3000) {
+            printf("Room created successful\n");
+            printf("Room ID: %d\n", atoi(recvline));
+            return 0;
+        }
+        else if (atoi(recvline) == -1) {
+            printf("Invalid room capacity\n");
+            continue;
+        } 
+        else if (atoi(recvline) == -2) {
+            printf("Invalid room isPublic - please enter 'T' or 'F'\n");
+            continue;
+        }
+        else if (atoi(recvline) == -3) {
+            printf("Room is full\n");
+            return -1;
+        }
+        else {
+            printf("Room creation failed!\n");
+            continue;
+        }
+    }
+}
+
+int JoinRoom(int sock_fd, const char* username) {
+    char input[MAXLINE], sendline[MAXLINE], recvline[MAXLINE];
+    int RoomID;
+    while (true) {
+        printf("\nJoin Room:\n");
+        printf("Enter Room ID: ");
+        scanf("%d", &RoomID); getchar();
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "%d", RoomID);
+        Write(sock_fd, sendline, sizeof(sendline));
+        int n = read(sock_fd, recvline, MAXLINE);
+        if (n <= 0) {
+            printf("Server terminated prematurely\n");
+            close(sock_fd);
+            return -2;
+        }
+
+        if (atoi(recvline) == 0) {
+            printf("Join Room successful\n");
+            return 0;
+        }
+        else if (atoi(recvline) == -1) {
+            printf("Room ID not found\n");
+            break;
+        }
+        else if (atoi(recvline) == -2) {
+            printf("Room is full\n");
+            break;
+        }
+        else {
+            printf("Join Room failed\n");
+            break;
+        }
+    }
+    return -1;
+}
+
+void Game(int sock_fd) {
+    printf("Wait for the game to start\n");
+
+    char recvline[MAXLINE];
+    while (true) {
+        bzero(&recvline, MAXLINE);
+        int n = read(sock_fd, recvline, MAXLINE);
+        if (atoi(recvline) == 0) continue;
+        break;
+    }
+
+    printf("Game started\n");
+    bzero(&recvline, MAXLINE);
+    int n = read(sock_fd, recvline, MAXLINE);
+    printf("Game message: %s\n", recvline);
+    return;
 }
