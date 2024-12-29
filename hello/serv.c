@@ -1,6 +1,5 @@
 # include "unp.h"
 # include "serv.h"
-# include <stdbool.h>
 
 // Functions
 struct sockaddr_in sockaddr_setup(short family, int port, int addr) {
@@ -15,10 +14,12 @@ struct sockaddr_in sockaddr_setup(short family, int port, int addr) {
 // int main(int argc, char** argv)
 int main(int argc, char** argv) {
     MAIN_START;
+    srand(time(NULL));
     userfile_setup();
+    rooms_setup();
     if (argc != 2) { fprintf(stderr, "Usage: %s <port>\n", argv[0]); exit(1); }
 
-    int listen_fd = Socket(AF_INET, SOCK_STREAM, 0);
+    listen_fd = Socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in serv_addr = sockaddr_setup(AF_INET, atoi(argv[1]), htonl(INADDR_ANY));
     
     Bind(listen_fd, (SA*)&serv_addr, sizeof(serv_addr));
@@ -40,6 +41,36 @@ int main(int argc, char** argv) {
         pthread_create(&tid, NULL, handle_client, connect_fd_ptr);
     }
     MAIN_END;
+}
+
+void rooms_setup() {
+    RoomCount = -1;
+    Rooms = (Room_t*)malloc(sizeof(Room_t) * MAXCLIENT);
+    for (int i = 0; i < MAXCLIENT; i++) {
+        Rooms[i].owner = (char*)malloc(sizeof(char) * 50);
+        Rooms[i].roomid = -1;
+        Rooms[i].capacity = -1;
+        Rooms[i].players = NULL;
+        Rooms[i].ownerStatus = false;
+        Rooms[i].isPublic = false;
+
+        Rooms[i].onlineCount = 0;
+        Rooms[i].onlineStatus = NULL;
+        Rooms[i].Connfds = NULL;
+    }
+}
+void room_print(Room_t* room) {
+    printf("\tRoom ID: %d\n", room->roomid);
+    printf("\tOwner: %s\n", room->owner);
+    printf("\tCapacity: %d\n", room->capacity);
+    printf("\tOwner Status: %s\n", room->ownerStatus ? "online" : "offline");
+    printf("\tPublic?: %s\n", room->isPublic ? "true" : "false");
+    printf("\tPlayers:\n");
+    for (int i = 0; i < room->capacity; i++) {
+        printf("\t\t%d: %s -> %s\n", i + 1, room->players[i], (room->onlineStatus[i]) ? "online" : "offline");
+    }
+    printf("\tOnline Count: %d\n", room->onlineCount);
+    printf("\n");
 }
 
 void userfile_setup() {
@@ -84,7 +115,7 @@ void cli_disconnect(int connfd) {
         bzero(&exist_fd, 32);
 
         sscanf(userinfo, "%s %s %s %s", exist_username, exist_password, status, exist_fd);
-        if (atoi(exist_fd) == connfd) {
+        if (atoi(exist_fd) == connfd && strcmp(status, "on") == 0) {
             snprintf(userinfo, MAXLINE, "%s %s off %d\n", exist_username, exist_password, connfd);
             printf("userinfo update: %s\n", userinfo);
         }
@@ -113,7 +144,7 @@ void* handle_client(void* connfd_ptr) {
             break;
         }
         ///////////////////////////////////////////////////////////////////
-
+        printf("parse input: %s\n", buffer);
         char command[10], username[50], password[50];
         bzero(&command, 10);
         bzero(&username, 50);
@@ -121,8 +152,9 @@ void* handle_client(void* connfd_ptr) {
         sscanf(buffer, "%s %s %s", command, username, password);
         ///////////////////////////////////////////////////////////////////
         // Check client's input format
+        printf("check input format: %s\n", buffer);
         if (!strcmp(username, "") || !strcmp(password, "")) {
-            printf("Write: Invalid command format: `%s %s %s`\n");
+            printf("Write: Invalid command format: `%s %s %s`\n", command, username, password);
             bzero(&sendline, MAXLINE);
             sprintf(sendline, "Invalid command format\n");
             // Write(connfd, sendline, sizeof(sendline));
@@ -258,7 +290,7 @@ int login_user(int connfd, const char* username, const char* password) {
                 printf("new userinfo: %s\n", userinfo);
             } 
             else if (strcmp(status, "on") == 0) {
-                Write(connfd, "User already login via other device\n", MAXLINE);
+                // Write(connfd, "User already login via other device\n", MAXLINE);
                 fclose(file);
                 fclose(tpfile);
                 remove(TP_FILE);
@@ -291,21 +323,243 @@ void Lobby(int connfd, const char* username) {
         int n = read(connfd, command, sizeof(command));
         if (n <= 0) {
             printf("Client disconnected while in Lobby\n");
+            cli_disconnect(connfd);
             return;
         }
 
         if (command[0] == '\0') continue;
         printf("Client command: %s\n", command);
         if (strcmp(command, "1") == 0) {
-            printf("New Room\n");
+            printf("Choice: New Room\n");
+            int newRoomResult = NewRoom(connfd, username);
+            if (newRoomResult == -1) break;
+            else if (newRoomResult == -2) continue;
+            else {
+                // fork a new process to handle the new game room
+                pid_t pid = fork();
+                if (pid == 0) {
+                    // child process
+                    close(listen_fd);
+                    printf("New room process created. Room ID: %d\n", newRoomResult);
+                    HandleRoom(connfd, newRoomResult, username);
+                    exit(0);
+                }
+                else if (pid > 0) {
+                    // parent process
+                    close(connfd);
+                    continue;
+                }
+                else {
+                    perror("fork error\n");
+                }
+            }
+
         } else if (strcmp(command, "2") == 0) {
-            printf("Join Room\n");
+            printf("Choice: Join Room\n");
+            int joinRoomResult = JoinRoom(connfd, username);
+            // if (joinRoomResult == -3) break;
+            if (joinRoomResult == -1) continue;
+            else if (joinRoomResult == -2) continue;
+            // fork a new process to handle the join game room
+            else {
+                // join the forked game room by room id
+                pid_t pid = fork();
+                if (pid == 0) { // child process
+                    close(listen_fd);
+                    printf("Join room process created. Room ID: %d\n", joinRoomResult);
+                    HandleRoom(connfd, joinRoomResult, username);
+                    exit(0);
+                }
+                else if (pid > 0) { // parent process
+                    close(connfd);
+                    continue;
+                }
+                else {
+                    perror("fork error\n");
+                }
+            }
         } else if (strcmp(command, "3") == 0) {
-            printf("Exit\n");
+            printf("Choice: Exit\n");
+            cli_disconnect(connfd);
             break;
         } else {
-            printf("Invalid command\n");
+            printf("Choice: Invalid command\n");
+            Write(connfd, "-1", MAXLINE);
         }
     }
+}
 
+int NewRoom(int connfd, const char* username) {
+    // printf("- New Room Setup:\n");
+    char input[MAXLINE], sendline[MAXLINE];
+    int RoomID;
+    while (true) {
+        printf("- New Room Setup:\n");
+        bzero(&input, MAXLINE);
+        int n = read(connfd, input, MAXLINE);
+        if (n <= 0) {
+            printf("Client disconnected while creating New Room\n");
+            cli_disconnect(connfd);
+            return -1;
+        }
+        if (input[0] == '\0') continue;
+
+        char roomname[50], capacity[10], isPublic[5];
+        bzero(&roomname, 50);
+        bzero(&capacity, 10);
+        bzero(&isPublic, 5);
+        sscanf(input, "%s\n%s %s", roomname, capacity, isPublic);
+        
+        if (atoi(capacity) < 6 || atoi(capacity) > 10) {
+            printf("Invalid room capacity: %s\n", capacity);
+            bzero(&sendline, MAXLINE);
+            sprintf(sendline, "-1");
+            Write(connfd, sendline, sizeof(sendline));
+            continue;
+        }
+        if (strcmp(isPublic, "T") != 0 && strcmp(isPublic, "F") != 0) {
+            printf("Invalid room isPublic: %s\n", isPublic);
+            bzero(&sendline, MAXLINE);
+            sprintf(sendline, "-2");
+            Write(connfd, sendline, sizeof(sendline));
+            continue;
+        }
+        // Create new room
+        RoomCount++;
+        if (RoomCount >= MAXCLIENT) {
+            printf("Room is full\n");
+            bzero(&sendline, MAXLINE);
+            sprintf(sendline, "-3");
+            Write(connfd, sendline, sizeof(sendline));
+            return -2;
+        }
+
+        int roomid;
+        bool isUnique;
+        do {
+            isUnique = true;
+            roomid = rand() % 3000 + 1;
+            for (int i = 0; i < RoomCount; i++) {
+                if (Rooms[i].roomid == roomid) {
+                    isUnique = false;
+                    break;
+                }
+            }
+        } while (!isUnique);
+
+        printf("Create new room(%d): %s %s %s\n", RoomCount + 1, roomname, capacity, isPublic);
+        strcpy(Rooms[RoomCount].owner, username);
+        Rooms[RoomCount].roomid = roomid; // 1 ~ 3000
+        Rooms[RoomCount].capacity = atoi(capacity);
+        Rooms[RoomCount].players = (char**)malloc(sizeof(char*) * Rooms[RoomCount].capacity);
+        Rooms[RoomCount].onlineStatus = (bool*)malloc(sizeof(bool) * Rooms[RoomCount].capacity);
+        Rooms[RoomCount].Connfds = (int*)malloc(sizeof(int) * Rooms[RoomCount].capacity);
+        for (int i = 0; i < Rooms[RoomCount].capacity; i++) {
+            Rooms[RoomCount].players[i] = (char*)malloc(sizeof(char) * 50);
+            bzero(Rooms[RoomCount].players[i], 50);
+            Rooms[RoomCount].onlineStatus[i] = false;
+            Rooms[RoomCount].Connfds[i] = -1;
+        }
+        strcpy(Rooms[RoomCount].players[0], username);
+        Rooms[RoomCount].onlineStatus[0] = true;
+        Rooms[RoomCount].ownerStatus = true;
+        Rooms[RoomCount].onlineCount = 1;
+        Rooms[RoomCount].isPublic = (strcmp(isPublic, "T") == 0) ? true : false;
+        Rooms[RoomCount].Connfds[0] = connfd;
+
+        // Debug room info
+        room_print(&Rooms[RoomCount]);
+        
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "%d", Rooms[RoomCount].roomid);
+        Write(connfd, sendline, sizeof(sendline));
+        RoomID = Rooms[RoomCount].roomid;
+        break;
+    }
+    return RoomID;
+}
+int JoinRoom(int connfd, const char* username) {
+    char input[MAXLINE], sendline[MAXLINE];
+    int RoomID;
+    while (true) {
+        int n = read(connfd, input, MAXLINE);
+        if (n <= 0) {
+            printf("Client disconnected while joining Room\n");
+            cli_disconnect(connfd);
+            return -3;
+        }
+        if (input[0] == '\0') continue;
+
+        sscanf(input, "%d", &RoomID);
+        printf("Join Room ID: %d\n", RoomID);
+        for (int i = 0; i <= RoomCount; i++) {
+            if (Rooms[i].roomid == RoomID) {
+                if (Rooms[i].onlineCount == Rooms[i].capacity) {
+                    printf("Room is full\n");
+                    bzero(&sendline, MAXLINE);
+                    sprintf(sendline, "-2");
+                    Write(connfd, sendline, sizeof(sendline));
+                    return -2;
+                }
+                for (int j = 0; j < Rooms[i].capacity; j++) {
+                    if (!Rooms[i].onlineStatus[j]) {
+                        strcpy(Rooms[i].players[j], username);
+                        Rooms[i].onlineStatus[j] = true;
+                        Rooms[i].Connfds[j] = connfd;
+                        Rooms[i].onlineCount++;
+                        break;
+                    }
+                }
+                
+                room_print(&Rooms[i]);
+                bzero(&sendline, MAXLINE);
+                sprintf(sendline, "0");
+                Write(connfd, sendline, sizeof(sendline));
+                return RoomID;
+            }
+        }
+        printf("Room ID not found\n");
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "-1");
+        Write(connfd, sendline, sizeof(sendline));
+        return -1;
+    }
+}
+
+
+void HandleRoom(int connfd, int roomID, const char* username) {
+    printf("Wait until game start!\n");
+    bool findRoom = false;
+    Room_t* room;
+    for (int i = 0; i <= RoomCount; i++) {
+        if (Rooms[i].roomid == roomID) {
+            room = &Rooms[i];
+            findRoom = true;
+            break;
+        }
+    }
+    if (!findRoom) {
+        printf("Room ID not found\n");
+        return;
+    }
+
+    if (room->onlineCount < room->capacity) {
+        printf("Wait for other players to join the room\n");
+        while (room->onlineCount < room->capacity) {
+            Write(connfd, "0", 1);
+            sleep(1);
+        }
+    }
+    else {
+        printf("Game start!\n");
+        Write(connfd, "1", 1);
+        // Game start
+        RunGame(roomID, room);
+    }
+}
+void RunGame(int roomID, Room_t* room) {
+    printf("helloooooo\n");
+    for (int i = 0; i < room->capacity; i++) {
+        Write(room->Connfds[i], "Helloo\n", 8);
+    }
 }
