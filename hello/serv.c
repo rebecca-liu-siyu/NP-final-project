@@ -458,6 +458,7 @@ int NewRoom(int connfd, const char* username) {
         Rooms[RoomCount].isPublic = (strcmp(isPublic, "T") == 0) ? true : false;
         Rooms[RoomCount].Connfds[0] = connfd;
         Rooms[RoomCount].gameEnd = false;
+        Rooms[RoomCount].gameStart = false;
 
         // Debug room info
         room_print(&Rooms[RoomCount]);
@@ -487,6 +488,13 @@ int JoinRoom(int connfd, const char* username) {
         printf("Join Room ID: %d\n", RoomID);
         for (int i = 0; i <= RoomCount; i++) {
             if (Rooms[i].roomid == RoomID) {
+                if (Rooms[i].gameStart) {
+                    printf("Game started\n");
+                    bzero(&sendline, MAXLINE);
+                    sprintf(sendline, "-3");
+                    Write(connfd, sendline, sizeof(sendline));
+                    return -2;
+                }
                 if (Rooms[i].onlineCount == Rooms[i].capacity) {
                     printf("Room is full\n");
                     bzero(&sendline, MAXLINE);
@@ -530,46 +538,80 @@ void HandleRoom(int connfd, int roomID, const char* username) {
         }
     }
 
+    // while (room->onlineCount < room->capacity && room->onlineCount < 2) {
     while (room->onlineCount < room->capacity) {
         sleep(1);
     }
-    printf("start game!, %s\n", username);
     RunGame(room->roomid, room, username);
 
 }
 
 void RunGame(int roomID, Room_t* room, const char* username) {
-    printf("helloooooo %s\n", username);
+    printf("RunGame start!: helloooooo %s\n", username);
+    // while (room->onlineCount < room->capacity) sleep(3);
+    
+    int my_i = 0;
     char sendline[MAXLINE], recvline[MAXLINE];
     for (int i = 0; i < room->capacity; i++) {
+        if (room->onlineStatus[i] == false) continue;
         bzero(&sendline, MAXLINE);
         if (strcmp(username, room->players[i]) == 0) {
+            my_i = room->Connfds[i];
             sprintf(sendline, "1", 1);
             Write(room->Connfds[i], sendline, strlen(sendline));
             break;
         }
     }
-    sleep(2);
-    for (int i = 0; i < room->capacity; i++) {
-        bzero(&sendline, MAXLINE);
-        if (strcmp(username, room->players[i]) == 0) continue;
-        sprintf(sendline, "(%s) Helloo, this is %s\n", username, username);
-        Write(room->Connfds[i], sendline, strlen(sendline));
+    sleep(1);
+    room->gameStart = true;
+
+    bzero(&recvline, MAXLINE);
+    int n = read(my_i, recvline, MAXLINE);
+    if (n <= 0) {
+        room->onlineCount--;
+        room->onlineStatus[my_i] = false;
+        cli_disconnect(room->Connfds[my_i]);
+        Close(room->Connfds[my_i]);
+        room->Connfds[my_i] = -1;
     }
+
+    printf("///////////\n");
+    printf("initial broadcast:\n");
+    for (int i = 0; i < room->capacity; i++) {
+        if (room->onlineStatus[i] == false || room->Connfds[i] == my_i) continue;
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "(%s) %s in the room\n", room->players[i], room->players[i]);
+        Write(my_i, sendline, strlen(sendline));
+        printf("%s", sendline);
+    }
+    // if (room->onlineCount > 2) {
+    //     for (int i = 0; i < room->capacity; i++) {
+    //         if (room->onlineStatus[i] == false || room->Connfds[i] == my_i) continue;
+    //         bzero(&sendline, MAXLINE);
+    //         sprintf(sendline, "(%s) %s in the room\n", username, username);
+    //         Write(room->Connfds[i], sendline, strlen(sendline));
+    //         printf("%s", sendline);
+    //     }
+    // }
+    printf("///////////\n");
+    
     
     while (!room->gameEnd && strcmp(username, room->owner)) sleep(3);
+    // if (strcmp(username, room->owner)) { printf("///////////\nGAME END\n"); return; }
+    Game6(roomID, room);
+    
+    int maxfdp1, numFdReady;
+    fd_set rset;
 
-    int maxfdp1 = -1, numFdReady;
-    fd_set rset, rset_template;
+    while (true && !room->gameEnd) {
+        maxfdp1 = -1;
+        FD_ZERO(&rset);
+        for (int i = 0; i < room->capacity; i++) {
+            if (room->Connfds[i] == -1) continue;
+            FD_SET(room->Connfds[i], &rset);
+            maxfdp1 = max(maxfdp1, room->Connfds[i] + 1);
+        }
 
-    FD_ZERO(&rset_template);
-    for (int i = 0; i < room->capacity; i++) {
-        FD_SET(room->Connfds[i], &rset_template);
-        maxfdp1 = max(maxfdp1, room->Connfds[i] + 1);
-    }
-
-    while (true) {
-        rset = rset_template;
         numFdReady = Select(maxfdp1, &rset, NULL, NULL, NULL);
         // check every client
         for (int i = 0; i < room->capacity; i++) {
@@ -585,11 +627,11 @@ void RunGame(int roomID, Room_t* room, const char* username) {
                 // Close the connection and free space
                 cli_disconnect(room->Connfds[i]);
                 Close(room->Connfds[i]);
-                FD_CLR(room->Connfds[i], &rset_template);
                 room->Connfds[i] = -1;
 
 
                 bzero(&sendline, sizeof(sendline));
+                // if (room->onlineCount == 0) room->gameEnd = true;
                 if (room->onlineCount <= 1) sprintf(sendline, "(%s left the room. You are the last one. Press Ctrl+D to leave or wait for a new user.\n)", room->players[i]);
                 else sprintf(sendline, "(%s left the room. %d users left)\n", room->players[i], room->onlineCount);
 
@@ -607,6 +649,52 @@ void RunGame(int roomID, Room_t* room, const char* username) {
         }
 
     }
+    printf("///////////\nGAME END\n");
+}
+
+void Game6(int roomID, Room_t* room) {
+    // 分配身分
+    // 預言家+守衛+2平民 v.s. 2狼人
+    int charactor[6];
+    bool numberCheck[6] = { false };
+    bool alive[6] = { true };
+    for (int i = 0; i < 6; i++) {
+        int randNum = rand() % 6;
+        while (numberCheck[randNum]) {
+            randNum = rand() % 6;
+        }
+        charactor[i] = randNum;
+        numberCheck[randNum] = true;
+    }
+
+    // send role to players
+    char sendline[MAXLINE], recvline[MAXLINE];
+    for (int i = 0; i < room->capacity; i++) {
+        if (!room->onlineStatus[i]) continue;
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "600 %d", charactor[i]); // role code: 600
+        Writen(room->Connfds[i], sendline, strlen(sendline));
+    }
 
     
-}
+    int maxfdp1 = 0, n;
+    fd_set rset, rset_template;
+    FD_ZERO(&rset);
+    
+
+    // broadcast game start!
+    for (int round = 1; round < 5; round++) {
+        for (int i = 0; i < room->capacity; i++) {
+            if (!room->onlineStatus[i]) continue;
+            // round i NIGHT
+            bzero(&sendline, MAXLINE);
+            sprintf(sendline, "666 %d 1", round); // start game code: 666
+            Writen(room->Connfds[i], sendline, strlen(sendline));
+            
+            // 發動技能time
+            bzero(&sendline, MAXLINE);
+            sprintf(sendline, "666 %d 1 1", round); // wolf time
+        }
+    }
+
+} 
