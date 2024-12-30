@@ -109,6 +109,7 @@ int main(int argc, char** argv) {
 int Lobby(int sock_fd, const char* username) {
     char input[MAXLINE], sendline[MAXLINE];
     while(true) {
+        fflush(stdin);
         printf("\nNow, You can enter a game room\n");
         printf("1. New Room\n");
         printf("2. Join Room\n");
@@ -241,13 +242,82 @@ void Game(int sock_fd) {
     while (true) {
         bzero(&recvline, MAXLINE);
         int n = read(sock_fd, recvline, MAXLINE);
-        if (atoi(recvline) == 0) continue;
-        break;
+        if (atoi(recvline) == 1) break;
     }
 
     printf("Game started\n");
-    bzero(&recvline, MAXLINE);
-    int n = read(sock_fd, recvline, MAXLINE);
-    printf("Game message: %s\n", recvline);
+    // int n = 1;
+    // while (n > 0) {
+    //     bzero(&recvline, MAXLINE);
+    //     n = read(sock_fd, recvline, MAXLINE);
+    //     printf("Game message: %s\n", recvline);
+    // }
+    xchg_data(sock_fd, stdin);
+    printf("xchg_data end\n");
     return;
+}
+
+void xchg_data(int sock_fd, FILE *fp) {
+    int maxfdp1, stdineof, peer_exit, n;
+    fd_set rset;
+    char sendline[MAXLINE], recvline[MAXLINE];
+
+    stdineof = 0;
+	peer_exit = 0;
+
+    while (true) {
+        FD_ZERO(&rset);
+        maxfdp1 = 0;
+        if (stdineof == 0) {
+            FD_SET(fileno(fp), &rset);
+            maxfdp1 = fileno(fp) + 1;
+        }
+        if (peer_exit == 0) {
+            FD_SET(sock_fd, &rset);
+            maxfdp1 = max(maxfdp1, sock_fd + 1);
+        }
+
+        Select(maxfdp1, &rset, NULL, NULL, NULL);
+        if (FD_ISSET(sock_fd, &rset)) { // socket is readable
+        bzero(&recvline, MAXLINE);
+            n = read(sock_fd, recvline, MAXLINE);
+            if (n == 0) {
+                if (stdineof == 1) {
+                    printf("normal termination\n");
+                    return;
+                }
+                else {
+                    printf("end of input from the peer\n");
+                    peer_exit = 1;
+                    return;
+                }
+            }
+            else if (n > 0) {
+                recvline[n] = '\0';
+                printf("\x1B[0;36m%s\x1B[0m", recvline);
+				fflush(stdout);
+            }
+            else {
+                printf("(server down)\n");
+                return;
+            }
+        }
+        if (FD_ISSET(fileno(fp), &rset)) {
+            bzero(&sendline, MAXLINE);
+            if (Fgets(sendline, MAXLINE, fp) == NULL) {
+                if (peer_exit) return;
+                else {
+                    printf("(LEAVING...)\n");
+                    stdineof = 1;
+                    Shutdown(sock_fd, SHUT_WR);
+                }
+            }
+            else {
+                n = strlen(sendline);
+                sendline[n] = '\n';
+                Writen(sock_fd, sendline, n+1);
+                printf(" - write: %s", sendline);
+            }
+        }
+    }
 }
