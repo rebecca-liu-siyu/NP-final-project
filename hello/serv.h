@@ -21,6 +21,8 @@ struct Room {
     int    onlineCount;
     bool*  onlineStatus;
     int*   Connfds;
+
+    bool   gameEnd;
 };
 typedef struct Room Room_t;
 
@@ -42,5 +44,5 @@ void Lobby(int connfd, const char* username);
 int NewRoom(int connfd, const char* username);
 int JoinRoom(int connfd, const char* username);
 void HandleRoom(int connfd, int roomID, const char* username);
-void RunGame(int roomID, Room_t* room);
+void RunGame(int roomID, Room_t* room, const char* username);
 #endif // SERV_H
