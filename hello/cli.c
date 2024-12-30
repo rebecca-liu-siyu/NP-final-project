@@ -158,7 +158,6 @@ int NewRoom(int sock_fd, const char* username) {
     int RoomCapacity;
     char isPublic;
     while(true) {
-        fflush(stdin);
         printf("\nNew Room Setup:\n");
         printf("1. Set Room Name:\n");
         fgets(RoomName, 50, stdin);
@@ -227,6 +226,10 @@ int JoinRoom(int sock_fd, const char* username) {
             printf("Room is full\n");
             break;
         }
+        else if (atoi(recvline) == -3) {
+            printf("Game started already");
+            break;
+        }
         else {
             printf("Join Room failed\n");
             break;
@@ -246,12 +249,6 @@ void Game(int sock_fd) {
     }
 
     printf("Game started\n");
-    // int n = 1;
-    // while (n > 0) {
-    //     bzero(&recvline, MAXLINE);
-    //     n = read(sock_fd, recvline, MAXLINE);
-    //     printf("Game message: %s\n", recvline);
-    // }
     xchg_data(sock_fd, stdin);
     printf("xchg_data end\n");
     return;
@@ -264,7 +261,7 @@ void xchg_data(int sock_fd, FILE *fp) {
 
     stdineof = 0;
 	peer_exit = 0;
-
+    Writen(sock_fd, "1", 1);
     while (true) {
         FD_ZERO(&rset);
         maxfdp1 = 0;
@@ -314,10 +311,69 @@ void xchg_data(int sock_fd, FILE *fp) {
             }
             else {
                 n = strlen(sendline);
-                sendline[n] = '\n';
-                Writen(sock_fd, sendline, n+1);
+                sendline[n] = '\0';
+                Writen(sock_fd, sendline, n + 2);
                 printf(" - write: %s", sendline);
             }
         }
     }
+}
+
+void Game6(int sock_fd, FILE* fp) {
+    int maxfdp1, stdineof, peer_exit, n;
+    int roleCode, gameCode, roundCode, DayNight;
+    fd_set rset;
+
+    char sendline[MAXLINE], recvline[MAXLINE];
+
+    stdineof = 0;
+    peer_exit = 0;
+    FD_ZERO(&rset);
+    
+    // initial msg for being alive - 1
+    Writen(sock_fd, "1", 1);
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // ROLE ASSIGNMENT
+    printf("serv: role assigning...\n");
+    bzero(&recvline, MAXLINE);
+    n = read(sock_fd, recvline, MAXLINE);
+        // if (n <= 0)
+    sscanf(recvline, "%d %d", &gameCode, &roleCode);
+    if (gameCode != 600) {
+        printf("server gameCode failure(role assignment) - code: %d\n", gameCode);
+        return;
+    }
+
+    if (roleCode == 0) {
+        printf("你的身分是: '狼人'\n");
+    }
+    else if (roleCode == 1) {
+        printf("你的身分是: '狼人'\n");
+    }
+    else if (roleCode == 2) {
+        printf("你的身分是: '預言家'\n");
+    }
+    else if (roleCode == 3) {
+        printf("你的身分是: '守衛'\n");
+    }
+    else if (roleCode == 4) {
+        printf("你的身分是: '平民'\n");
+    }
+    else if (roleCode == 5) {
+        printf("你的身分是: '平民'\n");
+    }
+    ///////////////////////////////////////////////////////////////
+    printf("////////////////////////////////\n");
+    printf("GAME START:\n");
+    
+    bzero(&recvline, MAXLINE);
+    n = read(recvline, MAXLINE);
+    sscanf(recvline, "%d %d %d %d", &gameCode, &roundCode, &DayNight, &roleCode);
+    while (gameCode == 666) {
+        printf("Round %2d - %s\n", roundCode, (DayNight == 1) ? "Night" : "Morning");
+
+        n = read(recvline, "%d %d %d %d", &gameCode, &roundCode, &DayNight, &roleCode);
+        // wolf time
+    } 
 }
