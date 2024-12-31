@@ -240,7 +240,6 @@ int JoinRoom(int sock_fd, const char* username) {
 
 void Game(int sock_fd) {
     printf("Wait for the game to start\n");
-
     char recvline[MAXLINE];
     while (true) {
         bzero(&recvline, MAXLINE);
@@ -248,20 +247,23 @@ void Game(int sock_fd) {
         if (atoi(recvline) == 1) break;
     }
 
+    // when game start: server broadcast code 1
     printf("Game started\n");
-    xchg_data(sock_fd, stdin);
-    printf("xchg_data end\n");
+    // xchg_data(sock_fd, stdin);
+    Game6(sock_fd, stdin);
+    printf("Game end\n");
     return;
 }
 
 void xchg_data(int sock_fd, FILE *fp) {
-    int maxfdp1, stdineof, peer_exit, n;
+    int maxfdp1, stdineof, peer_exit, n, idx;
     fd_set rset;
     char sendline[MAXLINE], recvline[MAXLINE];
 
     stdineof = 0;
 	peer_exit = 0;
     Writen(sock_fd, "1", 1);
+
     while (true) {
         FD_ZERO(&rset);
         maxfdp1 = 0;
@@ -320,8 +322,9 @@ void xchg_data(int sock_fd, FILE *fp) {
 }
 
 void Game6(int sock_fd, FILE* fp) {
-    int maxfdp1, stdineof, peer_exit, n;
-    int roleCode, gameCode, roundCode, DayNight;
+    int maxfdp1, stdineof, peer_exit, n, idx;
+    int roleCode, gameCode, roundCode, DayNight, myRole;
+    char playersName[6][100];
     fd_set rset;
 
     char sendline[MAXLINE], recvline[MAXLINE];
@@ -330,16 +333,56 @@ void Game6(int sock_fd, FILE* fp) {
     peer_exit = 0;
     FD_ZERO(&rset);
     
-    // initial msg for being alive - 1
+    // 確認玩家存活 code: 1
     Writen(sock_fd, "1", 1);
 
     ////////////////////////////////////////////////////////////////////////////////////////
+    // 初始遊戲玩家資訊廣播
+    printf("初始遊戲玩家資訊廣播\n");
+    char msg1[100], msg2[100], code[10];
+    do {
+        bzero(&recvline, MAXLINE);
+        bzero(&msg1, 100);
+        bzero(&msg2, 100);
+        bzero(&code, 10);
+        n = read(sock_fd, recvline, MAXLINE);
+        printf("recv: %s\n", recvline);
+        sscanf(recvline, "%s %s %s", code, msg1, msg2);
+        gameCode = atoi(code);
+        // printf("gamecode: %s -> atoi: %d\n", code, gameCode);
+        if (gameCode != 598) break;
+        printf("\x1B[0;36m(%s) %s in the room\n\x1B[0m", msg2, msg2);
+    } while (gameCode == 598);
+    printf("////////////////////////////////////////////\n");
+    // Write(sock_fd, "-598", 4);
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // PLAYERS NAME
+    gameCode = 599;
+    printf("PLAYERS NAME:\n");
+    do {
+        bzero(&recvline, MAXLINE);
+        bzero(&msg1, 100);
+        bzero(&msg2, 100);
+        bzero(&code, 10);
+        n = Read(sock_fd, recvline, MAXLINE);
+        printf("recv: %s", recvline);
+        sscanf(recvline, "%s %s %s", code, msg1, msg2);
+        gameCode = atoi(code);
+        idx = atoi(msg1);
+        if (gameCode != 599) break;
+        printf("\x1B[0;33mPlayer %d: %s\n\x1B[0m", idx + 1, msg2);
+    } while (gameCode == 599);
+    printf("////////////////////////////////////////////\n");
+
+
     // ROLE ASSIGNMENT
     printf("serv: role assigning...\n");
     bzero(&recvline, MAXLINE);
     n = read(sock_fd, recvline, MAXLINE);
-        // if (n <= 0)
+    printf("serv: %s\n", recvline);
     sscanf(recvline, "%d %d", &gameCode, &roleCode);
+    myRole = roleCode;
     if (gameCode != 600) {
         printf("server gameCode failure(role assignment) - code: %d\n", gameCode);
         return;
@@ -368,12 +411,22 @@ void Game6(int sock_fd, FILE* fp) {
     printf("GAME START:\n");
     
     bzero(&recvline, MAXLINE);
-    n = read(recvline, MAXLINE);
+    n = read(sock_fd, recvline, MAXLINE);
+    printf("recv: %s\n", recvline);
     sscanf(recvline, "%d %d %d %d", &gameCode, &roundCode, &DayNight, &roleCode);
     while (gameCode == 666) {
         printf("Round %2d - %s\n", roundCode, (DayNight == 1) ? "Night" : "Morning");
+        printf("serv: 天黑請閉眼\n");
 
-        n = read(recvline, "%d %d %d %d", &gameCode, &roundCode, &DayNight, &roleCode);
+        bzero(&recvline, MAXLINE);
+        n = read(sock_fd, recvline, MAXLINE);
+        printf("recv: %s\n", recvline);
+        sscanf(recvline, "%d %d %d %d", &gameCode, &roundCode, &DayNight, &roleCode);
         // wolf time
+        if (roleCode == 0 && DayNight == 1) printf("serv: 狼人請睜眼\n你的同伴是: ");
+        // if (myRole == 0)
+        gameCode++;
+        break;
     } 
+    while (true) sleep(3);
 }
