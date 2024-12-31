@@ -1,6 +1,7 @@
 #ifndef SERV_H
 #define SERV_H
 # include <stdbool.h>
+#include <netinet/tcp.h>
 
 // Extra definitions
 # define MAIN_START printf("\n= MAIN START =\n")
@@ -47,4 +48,5 @@ int JoinRoom(int connfd, const char* username);
 void HandleRoom(int connfd, int roomID, const char* username);
 void RunGame(int roomID, Room_t* room, const char* username);
 void Game6(int roomID, Room_t* room);
+void broadcastMSG(Room_t* room, const char* sendline);
 #endif // SERV_H
