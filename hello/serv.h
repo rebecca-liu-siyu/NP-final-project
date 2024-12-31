@@ -49,4 +49,5 @@ void HandleRoom(int connfd, int roomID, const char* username);
 void RunGame(int roomID, Room_t* room, const char* username);
 void Game6(int roomID, Room_t* room);
 void broadcastMSG(Room_t* room, const char* sendline);
+void getMSG(Room_t* room, int actionCode);
 #endif // SERV_H

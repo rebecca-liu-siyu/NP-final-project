@@ -532,7 +532,6 @@ int JoinRoom(int connfd, const char* username) {
     }
 }
 
-
 void HandleRoom(int connfd, int roomID, const char* username) {
     // FIND the room!
     printf("Handling room ID: %d\n", roomID);
@@ -700,7 +699,7 @@ void Game6(int roomID, Room_t* room) {
             sleep(1.5);
             Writen(room->Connfds[j], sendline, strlen(sendline));
             fsync(room->Connfds[j]);
-            printf("to %s: Write(room->Connfds[j], sendline, strlen(sendline))\n", room->players[j]);
+            // printf("to %s: Write(room->Connfds[j], sendline, strlen(sendline))\n", room->players[j]);
             
         }
         
@@ -720,8 +719,8 @@ void Game6(int roomID, Room_t* room) {
     printf("分配身分\n");
     sleep(2);
     int charactor[6];
-    bool numberCheck[6] = { false };
-    bool alive[6] = { true };
+    bool numberCheck[6] = { false, false, false, false, false, false };
+    bool alive[6] = { true, true, true, true, true, true };
     for (int i = 0; i < 6; i++) {
         int randNum = rand() % 6;
         while (numberCheck[randNum]) {
@@ -750,13 +749,15 @@ void Game6(int roomID, Room_t* room) {
     printf("//////////////////////////////////\n");
 
     
-    int maxfdp1 = 0;
+    int maxfdp1 = 0, numFdReady;
     fd_set rset, rset_template;
     FD_ZERO(&rset);
     
 
+    ////////////////////////////////////////////////////////////////////////////
     // broadcast game start!
     int round = 1;
+    int killed;
     while (true) {
         // round i NIGHT
         sleep(1);
@@ -767,12 +768,51 @@ void Game6(int roomID, Room_t* room) {
         // 發動技能time
         sleep(1);
         bzero(&sendline, MAXLINE);
-        sprintf(sendline, "666 %d 1 1 %s %s", round, room->players[wolfs[0]], room->players[wolfs[1]]); // wolf time
+        sprintf(sendline, "666 %d 1 1 %d %d", round, wolfs[0], wolfs[1]); // wolf time
+        broadcastMSG(room, sendline);
+
+        // get wolf decision
+        bool hasKill = false;
+        maxfdp1 = -1;
+        FD_ZERO(&rset);
+        if (alive[wolfs[0]]) FD_SET(room->Connfds[wolfs[0]], &rset);
+        if (alive[wolfs[1]]) FD_SET(room->Connfds[wolfs[1]], &rset);
+        while (!hasKill) {
+            if (!alive[wolfs[0]]) { if (!FD_ISSET(room->Connfds[wolfs[1]], &rset)) continue; }
+            else if (!alive[wolfs[1]]) { if (!FD_ISSET(room->Connfds[wolfs[0]], &rset)) continue; }
+            else { // 2 wolf alive
+                if (!FD_ISSET(room->Connfds[wolfs[1]], &rset) || !FD_ISSET(room->Connfds[wolfs[0]], &rset))
+                    continue;
+            }
+            
+            // 可以回應的都回應了!
+            if (FD_ISSET(room->Connfds[wolfs[1]], &rset)) {
+                bzero(&recvline, MAXLINE);
+                n = read(room->Connfds[wolfs[1]], recvline, MAXLINE);
+                printf("read: %s (from %s)", recvline, room->players[wolfs[1]]);
+                killed = atoi(recvline);
+                hasKill = true;
+            }
+            if (FD_ISSET(room->Connfds[wolfs[0]], &rset)) {
+                bzero(&recvline, MAXLINE);
+                n = read(room->Connfds[wolfs[0]], recvline, MAXLINE);
+                printf("read: %s (from %s)", recvline, room->players[wolfs[1]]);
+                killed = atoi(recvline);
+                hasKill = true;
+            }
+        }
+        printf("Round %d: wolfs kill - player %d (%s)\n", round, killed + 1, room->players[killed]);
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "BROADCAST (Round %d): wolfs kill - player %d (%s)\n", round, killed + 1, room->players[killed]);
         broadcastMSG(room, sendline);
         round++;
+        if (round == 5) break;
     }
-
+    bzero(&sendline, MAXLINE);
+    sprintf(sendline, "667 %d 1 0", round); // start game code: 666
+    broadcastMSG(room, sendline);
 }
+
 
 void broadcastMSG(Room_t* room, const char* sendline) {
     for (int i = 0; i < room->capacity; i++) {
