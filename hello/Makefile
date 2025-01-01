@@ -6,16 +6,26 @@ PROGS =	tcpcli01 tcpcli04 tcpcli05 tcpcli06 \
 		tcpserv08 tcpserv09 tcpservselect01 tcpservpoll01 tsigpipe \
 		my_tcpcli_hw1 my_tcpcli_hw3
 
+x = 8086
+
 all:	${PROGS}
 
 FORCE:
 
 serv:	serv.o FORCE
 		${CC} ${CFLAGS} -o $@ serv.o ${LIBS}
-		./serv 8082
+		./serv ${x}
 cli:    cli.o FORCE
 		${CC} ${CFLAGS} -o $@ cli.o ${LIBS}
-		./cli 127.0.0.1 8082
+		./cli 127.0.0.1 ${x}
+
+s6:	    s6.o FORCE
+		${CC} ${CFLAGS} -o $@ s6.o ${LIBS}
+		./s6 8081
+c6:     c6.o FORCE
+		${CC} ${CFLAGS} -o $@ c6.o ${LIBS}
+		./c6 127.0.0.1 8082
+
 
 my_tcpcli_hw1:	my_tcpcli_hw1.o FORCE
 		${CC} ${CFLAGS} -o $@ my_tcpcli_hw1.o ${LIBS}
