@@ -47,7 +47,7 @@ int NewRoom(int connfd, const char* username);
 int JoinRoom(int connfd, const char* username);
 void HandleRoom(int connfd, int roomID, const char* username);
 void RunGame(int roomID, Room_t* room, const char* username);
-void Game6(int roomID, Room_t* room);
+int Game6(int roomID, Room_t* room);
 void broadcastMSG(Room_t* room, const char* sendline);
-void getMSG(Room_t* room, int actionCode);
+int Game6_EndCheck(int* charactor, bool* alive);
 #endif // SERV_H

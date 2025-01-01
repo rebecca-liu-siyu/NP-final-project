@@ -253,11 +253,13 @@ void* handle_client(void* connfd_ptr) {
 // registerCheck() return 0 - register sucessful, 1 - username already exist
 int registerCheck(FILE* file, const char* username, const char* passwd) {
     char exist_username[MAXLINE];
-    while (fscanf(file, "%s", exist_username) != EOF) {
+    bzero(&exist_username, MAXLINE);
+    while (fscanf(file, "%s %s %s %s", exist_username, NULL, NULL, NULL) != EOF) {
         if (strcmp(exist_username, username) == 0) {
             printf("Username '%s' already exist!\n", exist_username);
             return 1;
         }
+        bzero(&exist_username, MAXLINE);
     }
     return 0;
 }
@@ -351,6 +353,7 @@ void Lobby(int connfd, const char* username) {
                 // fork a new process to handle the new game room
                 printf("You are the host, wait for other to join the room\n");
                 HandleRoom(connfd, room->roomid, username);
+                continue;
             }
 
         } 
@@ -372,6 +375,7 @@ void Lobby(int connfd, const char* username) {
                 // join the forked game room by room id
                 printf("wait for other to join the room\n");
                 HandleRoom(connfd, room->roomid, username);
+                continue;
             }
         
         } else if (strcmp(command, "3") == 0) {
@@ -619,8 +623,8 @@ void RunGame(int roomID, Room_t* room, const char* username) {
     
     while (!room->gameEnd && strcmp(username, room->owner)) sleep(3);
     // if (strcmp(username, room->owner)) { printf("///////////\nGAME END\n"); return; }
-    Game6(roomID, room);
-    
+    int result = Game6(roomID, room);
+    /*
     int maxfdp1, numFdReady;
     fd_set rset;
 
@@ -668,14 +672,19 @@ void RunGame(int roomID, Room_t* room, const char* username) {
                 }
             }
         }
-
-    }
-    printf("///////////\nGAME END\n");
+    }*/
+    printf("RUN GAME result: %s\n", (result) ? "good wins" : "bad wins");
+    printf("///////////\nRun GAME END\n");
 }
 
-void Game6(int roomID, Room_t* room) {
+int Game6(int roomID, Room_t* room) {
     int n;
     char sendline[MAXLINE], recvline[MAXLINE];
+    int charactor[6];
+    bool numberCheck[6] = { false, false, false, false, false, false };
+    bool alive[6] = { true, true, true, true, true, true };
+    int wolfs[2] = {-1}, civilians[2] = {-1};
+    int guard, seer;
     
     // FIN of 初始遊戲玩家資訊廣播
     for (int i = 0; i < room->capacity; i++) {
@@ -697,33 +706,25 @@ void Game6(int roomID, Room_t* room) {
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "599 %d %s\n", i, room->players[i]);
         printf("send: %s", sendline);
-        // for (int j = 0; j < room->capacity; j++) {
-        //     if (!room->onlineStatus[j]) continue;
-        //     sleep(1.5);
-        //     Writen(room->Connfds[j], sendline, strlen(sendline));
-        //     fsync(room->Connfds[j]);
-        //     // printf("to %s: Write(room->Connfds[j], sendline, strlen(sendline))\n", room->players[j]);
-        // }
         broadcastMSG(room, sendline);
         sleep(4);
     }
     printf("//////////////////////////////////\n");
     printf("600 FLAG\n");
-    for (int i = 0; i < room->capacity; i++) {
-        if (!room->onlineStatus[i]) continue;
-        fsync(room->Connfds[i]);
-        sleep(1);
-        Writen(room->Connfds[i], "600\n", 3);
+    broadcastMSG(room, "600\n");
+    // for (int i = 0; i < room->capacity; i++) {
+    //     if (!room->onlineStatus[i]) continue;
+    //     fsync(room->Connfds[i]);
+    //     sleep(1);
+    //     Writen(room->Connfds[i], "600\n", 3);
 
-    }
+    // }
     printf("//////////////////////////////////\n");
     // 分配身分
     // 預言家+守衛+2平民 v.s. 2狼人
     printf("分配身分\n");
     sleep(2);
-    int charactor[6];
-    bool numberCheck[6] = { false, false, false, false, false, false };
-    bool alive[6] = { true, true, true, true, true, true };
+
     for (int i = 0; i < 6; i++) {
         int randNum = rand() % 6;
         while (numberCheck[randNum]) {
@@ -734,9 +735,8 @@ void Game6(int roomID, Room_t* room) {
     }
 
     // send role to players
-    int wolfs[2] = {-1}, civilians[2] = {-1};
-    int guard, seer;
     for (int i = 0; i < room->capacity; i++) {
+        // charactor[i]: Player i 的角色是: rolecode 'charactor[i]'
         if (charactor[i] == 0 || charactor[i] == 1) wolfs[charactor[i]] = i;
         else if (charactor[i] == 2) seer = i;
         else if (charactor[i] == 3) guard = i;
@@ -755,12 +755,17 @@ void Game6(int roomID, Room_t* room) {
     int maxfdp1 = 0, numFdReady;
     fd_set rset, rset_template;
     FD_ZERO(&rset);
+    FD_ZERO(&rset_template);
+    // for (int i = 0; i < 6; i++) {
+    //     if ()
+    // }
     
 
     ////////////////////////////////////////////////////////////////////////////
     // broadcast game start!
     int round = 1;
     int killed;
+    int Game6_winnergroup;
     while (true) {
         // round i NIGHT
         sleep(1);
@@ -771,9 +776,45 @@ void Game6(int roomID, Room_t* room) {
         
         printf("發動技能time\n");
         //////////////////////////////////////////////////////////////////////
+        // GUARD
+        // 發動技能time
+        int safed;
+        sleep(1);
+        printf("GUARD 的決定是?\n");
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "666 %d 1 3 %d -1", round, guard); // guard time
+        broadcastMSG(room, sendline);
+
+        if (!alive[guard]) { safed = -1; sleep(5); broadcastMSG(room, "0"); sleep(1); }
+        else {
+            // 守衛要守護誰?
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[guard], recvline, MAXLINE);
+            if (n <= 0) { // client guard leave
+                room->onlineCount--;
+                room->onlineStatus[guard] = false;
+
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[guard]);
+                Close(room->Connfds[guard]);
+                room->Connfds[guard] = -1;
+            }
+            else {
+                safed = atoi(recvline);
+                printf("Round %d: guard safe - player %d (%s)\n", round, safed + 1, room->players[safed]);
+                bzero(&sendline, MAXLINE);
+                sprintf(sendline, "%d", safed);
+                // 回傳ack
+                broadcastMSG(room, sendline);
+                sleep(1);
+            }
+        }
+        
+
+        //////////////////////////////////////////////////////////////////////
         // WOLF
         // 發動技能time
-        sleep(1);
+        sleep(2);
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "666 %d 1 1 %d %d", round, wolfs[0], wolfs[1]); // wolf time
         broadcastMSG(room, sendline);
@@ -816,6 +857,15 @@ void Game6(int roomID, Room_t* room) {
         broadcastMSG(room, sendline);
         sleep(2);
 
+        printf("Guard check: ");
+        if (killed == safed) {
+            printf("safe successful!\n");
+            killed = -1;
+        }
+        else {
+            printf("safe fail!\n");
+        }
+
         //////////////////////////////////////////////////////////////////////
         // SEER
         // 發動技能time
@@ -850,9 +900,9 @@ void Game6(int roomID, Room_t* room) {
                 sleep(1);
             }
         }
-
+    /////////////////////////////////////////////////////////////////////////////
     // day comes
-        printf("天亮了\n");
+        printf("\x1B[0;33m\n天亮了\n\x1B[0m");
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "%d", killed + 1);
         broadcastMSG(room, sendline);
@@ -860,11 +910,14 @@ void Game6(int roomID, Room_t* room) {
         sleep(2);
         alive[killed] = false;
 
+        Game6_winnergroup = Game6_EndCheck(charactor, alive);
+        if (Game6_winnergroup) break;
+
         round++;
-        if (round == 5) break;
+        // if (round == 5) break;
     }
     bzero(&sendline, MAXLINE);
-    sprintf(sendline, "667 %d 1 0", round); // end game code: 667
+    sprintf(sendline, "667 %d 1 0", Game6_winnergroup); // end game code: 667
     broadcastMSG(room, sendline);
 }
 
@@ -872,6 +925,18 @@ void Game6(int roomID, Room_t* room) {
 void broadcastMSG(Room_t* room, const char* sendline) {
     for (int i = 0; i < room->capacity; i++) {
         if (!room->onlineStatus[i]) continue;
-        Writen(room->Connfds[i], sendline, strlen(sendline));
+        writen(room->Connfds[i], sendline, strlen(sendline));
     }
+}
+
+// 0: for game conti, 1: good win, 2: bad win
+int Game6_EndCheck(int* charactor, bool* alive) {
+    bool GroupBad_remain = false, GroupGood_remain = false;
+    for (int i = 0; i < 6; i++) {
+        if (charactor[i] <= 1 && alive[i]) GroupBad_remain = true;
+        else if (charactor[i] >= 2 && alive[i]) GroupGood_remain = true;
+    }
+    if (GroupGood_remain && GroupBad_remain) return 0;
+    if (GroupGood_remain) return 1;
+    return 2;
 }
