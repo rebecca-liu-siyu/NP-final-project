@@ -346,7 +346,7 @@ void Lobby(int connfd, const char* username) {
                 }
             }
             if (newRoomResult == -1) break;
-            else if (newRoomResult == -2) continue;
+            else if (newRoomResult <= -2) continue;
             else {
                 // fork a new process to handle the new game room
                 printf("You are the host, wait for other to join the room\n");
@@ -411,14 +411,14 @@ int NewRoom(int connfd, const char* username) {
             bzero(&sendline, MAXLINE);
             sprintf(sendline, "-1");
             Write(connfd, sendline, sizeof(sendline));
-            continue;
+            return -4;
         }
         if (strcmp(isPublic, "T") != 0 && strcmp(isPublic, "F") != 0) {
             printf("Invalid room isPublic: %s\n", isPublic);
             bzero(&sendline, MAXLINE);
             sprintf(sendline, "-2");
             Write(connfd, sendline, sizeof(sendline));
-            continue;
+            return -3;
         }
         // Create new room
         RoomCount++;
@@ -582,17 +582,20 @@ void RunGame(int roomID, Room_t* room, const char* username) {
         room->Connfds[my_i] = -1;
     }
 
+    ////////////////////////////////////////////////////////////////////////////////
     // 初始遊戲玩家資訊廣播
-    printf("////////////////////////////////////////////\n");
-    printf("initial broadcast:\n");
-    for (int i = 0; i < room->capacity; i++) {
-        if (room->onlineStatus[i] == false || room->Connfds[i] == my_i) continue;
-        bzero(&sendline, MAXLINE);
-        sprintf(sendline, "598 (%s) %s in the room", room->players[i], room->players[i]);
-        Writen(my_i, sendline, strlen(sendline));
-        printf("%s\n", sendline);
-        sleep(1);
-    }
+    // printf("////////////////////////////////////////////\n");
+    // printf("initial broadcast:\n");
+    // for (int i = 0; i < room->capacity; i++) {
+    //     if (room->onlineStatus[i] == false || room->Connfds[i] == my_i) continue;
+    //     bzero(&sendline, MAXLINE);
+    //     sprintf(sendline, "598 (%s) %s in the room", room->players[i], room->players[i]);
+    //     Writen(my_i, sendline, strlen(sendline));
+    //     printf("%s\n", sendline);
+    //     sleep(1);
+    // }
+    ////////////////////////////////////////////////////////////////////////////
+
     // for (int i = 0; i < room->capacity; i++) {
     //     if (room->onlineStatus[i] == false || room->Connfds[i] == my_i) continue;
     //     bzero(&sendline, MAXLINE);
@@ -694,15 +697,15 @@ void Game6(int roomID, Room_t* room) {
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "599 %d %s\n", i, room->players[i]);
         printf("send: %s", sendline);
-        for (int j = 0; j < room->capacity; j++) {
-            if (!room->onlineStatus[j]) continue;
-            sleep(1.5);
-            Writen(room->Connfds[j], sendline, strlen(sendline));
-            fsync(room->Connfds[j]);
-            // printf("to %s: Write(room->Connfds[j], sendline, strlen(sendline))\n", room->players[j]);
-            
-        }
-        
+        // for (int j = 0; j < room->capacity; j++) {
+        //     if (!room->onlineStatus[j]) continue;
+        //     sleep(1.5);
+        //     Writen(room->Connfds[j], sendline, strlen(sendline));
+        //     fsync(room->Connfds[j]);
+        //     // printf("to %s: Write(room->Connfds[j], sendline, strlen(sendline))\n", room->players[j]);
+        // }
+        broadcastMSG(room, sendline);
+        sleep(4);
     }
     printf("//////////////////////////////////\n");
     printf("600 FLAG\n");
@@ -765,6 +768,10 @@ void Game6(int roomID, Room_t* room) {
         sprintf(sendline, "666 %d 1 0", round); // start game code: 666
         broadcastMSG(room, sendline);
         
+        
+        printf("發動技能time\n");
+        //////////////////////////////////////////////////////////////////////
+        // WOLF
         // 發動技能time
         sleep(1);
         bzero(&sendline, MAXLINE);
@@ -772,6 +779,7 @@ void Game6(int roomID, Room_t* room) {
         broadcastMSG(room, sendline);
 
         // get wolf decision
+        printf("Wolf 的決定是?\n");
         bool hasKill = false;
         maxfdp1 = -1;
         FD_ZERO(&rset);
@@ -786,30 +794,77 @@ void Game6(int roomID, Room_t* room) {
             }
             
             // 可以回應的都回應了!
+            printf("wolf 可以回應的都回應了!");
             if (FD_ISSET(room->Connfds[wolfs[1]], &rset)) {
                 bzero(&recvline, MAXLINE);
                 n = read(room->Connfds[wolfs[1]], recvline, MAXLINE);
-                printf("read: %s (from %s)", recvline, room->players[wolfs[1]]);
+                printf("read: %s (from %s)\n", recvline, room->players[wolfs[1]]);
                 killed = atoi(recvline);
                 hasKill = true;
             }
             if (FD_ISSET(room->Connfds[wolfs[0]], &rset)) {
                 bzero(&recvline, MAXLINE);
                 n = read(room->Connfds[wolfs[0]], recvline, MAXLINE);
-                printf("read: %s (from %s)", recvline, room->players[wolfs[1]]);
+                printf("read: %s (from %s)\n", recvline, room->players[wolfs[1]]);
                 killed = atoi(recvline);
                 hasKill = true;
             }
         }
         printf("Round %d: wolfs kill - player %d (%s)\n", round, killed + 1, room->players[killed]);
         bzero(&sendline, MAXLINE);
-        sprintf(sendline, "BROADCAST (Round %d): wolfs kill - player %d (%s)\n", round, killed + 1, room->players[killed]);
+        sprintf(sendline, "%d", killed + 1);
         broadcastMSG(room, sendline);
+        sleep(2);
+
+        //////////////////////////////////////////////////////////////////////
+        // SEER
+        // 發動技能time
+        printf("SEER 的決定是?\n");
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "666 %d 1 2 %d -1", round, seer); // seer time
+        broadcastMSG(room, sendline);
+            
+        if (!alive[seer]) { sleep(5); broadcastMSG(room, "2"); sleep(1); }
+        else {
+            // 預言家要問誰?
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[seer], recvline, MAXLINE);
+            if (n <= 0) { // client seer leave
+                room->onlineCount--;
+                room->onlineStatus[seer] = false;
+                
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[seer]);
+                Close(room->Connfds[seer]);
+                room->Connfds[seer] = -1;
+            }
+            else {
+                int asked = atoi(recvline);
+                printf("Round %d: seer ask - player %d (%s)\n", round, asked + 1, room->players[asked]);
+                printf("\t---Player %d (%s) is %s\n", asked + 1, room->players[asked], (asked == wolfs[0] || asked == wolfs[1]) ? "bad" : "good");
+                bzero(&sendline, MAXLINE);
+                sprintf(sendline, "%d", (asked == wolfs[0] || asked == wolfs[1]) ? 0 : 1);
+                // bad: 0, good: 1
+                // 回傳結果
+                broadcastMSG(room, sendline);
+                sleep(1);
+            }
+        }
+
+    // day comes
+        printf("天亮了\n");
+        bzero(&sendline, MAXLINE);
+        sprintf(sendline, "%d", killed + 1);
+        broadcastMSG(room, sendline);
+        printf("殺人結果已送出\n");
+        sleep(2);
+        alive[killed] = false;
+
         round++;
         if (round == 5) break;
     }
     bzero(&sendline, MAXLINE);
-    sprintf(sendline, "667 %d 1 0", round); // start game code: 666
+    sprintf(sendline, "667 %d 1 0", round); // end game code: 667
     broadcastMSG(room, sendline);
 }
 
