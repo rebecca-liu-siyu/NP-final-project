@@ -337,7 +337,7 @@ void Lobby(int connfd, const char* username) {
 
         if (command[0] == '\0') continue;
         printf("Client command: %s\n", command);
-        if (strcmp(command, "1") == 0) {
+        if (atoi(command) == 1) {
             printf("Choice: New Room\n");
             int newRoomResult = NewRoom(connfd, username);
             Room_t* room = NULL;
@@ -357,7 +357,7 @@ void Lobby(int connfd, const char* username) {
             }
 
         } 
-        else if (strcmp(command, "2") == 0) {
+        else if (atoi(command) == 2) {
             printf("Choice: Join Room\n");
             int joinRoomResult = JoinRoom(connfd, username);
             Room_t* room = NULL;
@@ -378,7 +378,7 @@ void Lobby(int connfd, const char* username) {
                 continue;
             }
         
-        } else if (strcmp(command, "3") == 0) {
+        } else if (atoi(command) == 3) {
             printf("Choice: Exit\n");
             cli_disconnect(connfd);
             break;
@@ -410,14 +410,14 @@ int NewRoom(int connfd, const char* username) {
         bzero(&isPublic, 5);
         sscanf(input, "%s\n%s %s", roomname, capacity, isPublic);
         
-        if (atoi(capacity) < 2 || atoi(capacity) > 10) {
+        if (atoi(capacity) < 6 || atoi(capacity) > 6) {
             printf("Invalid room capacity: %s\n", capacity);
             bzero(&sendline, MAXLINE);
             sprintf(sendline, "-1");
             Write(connfd, sendline, sizeof(sendline));
             return -4;
         }
-        if (strcmp(isPublic, "T") != 0 && strcmp(isPublic, "F") != 0) {
+        if (strcmp(isPublic, "T") != 0 && strcmp(isPublic, "t") != 0 && strcmp(isPublic, "F") != 0 && strcmp(isPublic, "f") != 0) {
             printf("Invalid room isPublic: %s\n", isPublic);
             bzero(&sendline, MAXLINE);
             sprintf(sendline, "-2");
@@ -550,10 +550,10 @@ void HandleRoom(int connfd, int roomID, const char* username) {
     // while (room->onlineCount < room->capacity && room->onlineCount < 2) {
     // WAIT for client_num == capacity!
     while (room->onlineCount < room->capacity) { sleep(1); }
-    RunGame(room->roomid, room, username);
+    if (room->capacity == 6) RunGame6(room->roomid, room, username);
 }
 
-void RunGame(int roomID, Room_t* room, const char* username) {
+void RunGame6(int roomID, Room_t* room, const char* username) {
     printf("RunGame start function!: hello %s\n", username);
     
     int my_i = 0;
@@ -622,6 +622,7 @@ void RunGame(int roomID, Room_t* room, const char* username) {
 
     
     while (!room->gameEnd && strcmp(username, room->owner)) sleep(3);
+    if (strcmp(username, room->owner)) return;
     // if (strcmp(username, room->owner)) { printf("///////////\nGAME END\n"); return; }
     int result = Game6(roomID, room);
     /*
@@ -675,16 +676,31 @@ void RunGame(int roomID, Room_t* room, const char* username) {
     }*/
     printf("RUN GAME result: %s\n", (result) ? "good wins" : "bad wins");
     printf("///////////\nRun GAME END\n");
+    room->gameEnd = true;
 }
 
 int Game6(int roomID, Room_t* room) {
     int n;
     char sendline[MAXLINE], recvline[MAXLINE];
     int charactor[6];
-    bool numberCheck[6] = { false, false, false, false, false, false };
     bool alive[6] = { true, true, true, true, true, true };
-    int wolfs[2] = {-1}, civilians[2] = {-1};
+    int wolfs[2] = {-1, -1}, civilians[2] = {-1, -1};
     int guard, seer;
+
+        
+    int maxfdp1 = 0, numFdReady;
+    fd_set rset, rset_template;
+    struct timeval timeOut, timeOut_template;
+    timeOut_template.tv_sec = 0;
+    timeOut_template.tv_usec = 100000;
+    FD_ZERO(&rset);
+    FD_ZERO(&rset_template);
+    for (int i = 0; i < 6; i++) {
+        if (!room->onlineStatus[i]) continue;
+        FD_SET(room->Connfds[i], &rset_template);
+        maxfdp1 = max(maxfdp1, room->Connfds[i] + 1);
+    }
+    
     
     // FIN of 初始遊戲玩家資訊廣播
     for (int i = 0; i < room->capacity; i++) {
@@ -692,9 +708,10 @@ int Game6(int roomID, Room_t* room) {
         sleep(1);
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "599 FIN flag", room->players[i], room->players[i]);
-        Write(room->Connfds[i], sendline, strlen(sendline));
+        write(room->Connfds[i], sendline, strlen(sendline));
         printf("%s\n", sendline);
     }
+
 
 
     // 發布玩家名單
@@ -707,9 +724,11 @@ int Game6(int roomID, Room_t* room) {
         sprintf(sendline, "599 %d %s\n", i, room->players[i]);
         printf("send: %s", sendline);
         broadcastMSG(room, sendline);
-        sleep(4);
+        sleep(3);//sleepmore
     }
     printf("//////////////////////////////////\n");
+
+
     printf("600 FLAG\n");
     broadcastMSG(room, "600\n");
     // for (int i = 0; i < room->capacity; i++) {
@@ -720,57 +739,77 @@ int Game6(int roomID, Room_t* room) {
 
     // }
     printf("//////////////////////////////////\n");
+
     // 分配身分
     // 預言家+守衛+2平民 v.s. 2狼人
     printf("分配身分\n");
     sleep(2);
-
+    srand(time(0)); // 初始化隨機數生成器
+    int numberCheck[6] = { 0, 0, 0, 0, 0, 0 };
     for (int i = 0; i < 6; i++) {
         int randNum = rand() % 6;
         while (numberCheck[randNum]) {
             randNum = rand() % 6;
         }
         charactor[i] = randNum;
-        numberCheck[randNum] = true;
+        numberCheck[randNum] = 1; // 標記該數字已經使用
+        printf("charactor[%d]: %d\n", i, charactor[i]);
     }
-
+    for (int i = 0; i < 6; i++) printf("charactor[%d]: %d\n", i, charactor[i]);
+    printf("//////////////////////////////////\n");
     // send role to players
-    for (int i = 0; i < room->capacity; i++) {
+    for (int j = 0; j < 6; j++) {
         // charactor[i]: Player i 的角色是: rolecode 'charactor[i]'
-        if (charactor[i] == 0 || charactor[i] == 1) wolfs[charactor[i]] = i;
-        else if (charactor[i] == 2) seer = i;
-        else if (charactor[i] == 3) guard = i;
-        else civilians[charactor[i]] = i;
+        if (charactor[j] == 0 || charactor[j] == 1) wolfs[charactor[j]] = j;
+        else if (charactor[j] == 2) seer = j;
+        else if (charactor[j] == 3) guard = j;
+        else civilians[charactor[j] - 4] = j;
 
-        if (!room->onlineStatus[i]) continue;
+
+        if (!room->onlineStatus[j]) continue;
         sleep(1);
         bzero(&sendline, MAXLINE);
-        sprintf(sendline, "600 %d", charactor[i]); // role code: 600
-        Writen(room->Connfds[i], sendline, strlen(sendline));
-        printf("send: %s to %s\n", sendline, room->players[i]);
+        printf("600 %d\t", charactor[j]);
+        sprintf(sendline, "600 %d", charactor[j]); // role code: 600
+        writen(room->Connfds[j], sendline, strlen(sendline));
+        printf("send: %s to %s\n", sendline, room->players[j]);
+
     }
     printf("//////////////////////////////////\n");
 
-    
-    int maxfdp1 = 0, numFdReady;
-    fd_set rset, rset_template;
-    FD_ZERO(&rset);
-    FD_ZERO(&rset_template);
-    // for (int i = 0; i < 6; i++) {
-    //     if ()
-    // }
-    
 
     ////////////////////////////////////////////////////////////////////////////
     // broadcast game start!
     int round = 1;
     int killed;
-    int Game6_winnergroup;
-    while (true) {
+    int Game6_winnergroup = 0;
+    while (!Game6_winnergroup) {
         // round i NIGHT
         sleep(1);
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "666 %d 1 0", round); // start game code: 666
+        rset = rset_template;
+        timeOut = timeOut_template;
+        numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+        printf("\nGame6 check 1: %d ready\n", numFdReady);
+        for (int i = 0; i < 6; i++) {
+            if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[i], recvline, MAXLINE);
+            if (n <= 0) {
+                room->onlineCount--;
+                room->onlineStatus[i] = false;
+                alive[i] = false;
+
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[i]);
+                Close(room->Connfds[i]);
+                FD_CLR(room->Connfds[i], &rset_template);
+                room->Connfds[i] = -1;
+            }
+            else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+        }
+        printf("Game6 check 1 END====\n\n");
         broadcastMSG(room, sendline);
         
         
@@ -783,9 +822,63 @@ int Game6(int roomID, Room_t* room) {
         printf("GUARD 的決定是?\n");
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "666 %d 1 3 %d -1", round, guard); // guard time
+        rset = rset_template;
+        timeOut = timeOut_template;
+        numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+        printf("\nGame6 check 2: %d ready\n", numFdReady);
+        for (int i = 0; i < 6; i++) {
+            if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[i], recvline, MAXLINE);
+            if (n <= 0) {
+                room->onlineCount--;
+                room->onlineStatus[i] = false;
+                alive[i] = false;
+
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[i]);
+                Close(room->Connfds[i]);
+                room->Connfds[i] = -1;
+
+                Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                if (Game6_winnergroup) break;
+            }
+            else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+        }
+        printf("Game6 check 2 END====\n\n");
         broadcastMSG(room, sendline);
 
-        if (!alive[guard]) { safed = -1; sleep(5); broadcastMSG(room, "0"); sleep(1); }
+        if (!alive[guard]) { 
+            safed = -1; 
+            sleep(5); 
+            rset = rset_template;
+            timeOut = timeOut_template;
+            numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+            printf("\nGame6 check 3.1: %d ready\n", numFdReady);
+            for (int i = 0; i < 6; i++) {
+                if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+                bzero(&recvline, MAXLINE);
+                n = read(room->Connfds[i], recvline, MAXLINE);
+                if (n <= 0) {
+                    room->onlineCount--;
+                    room->onlineStatus[i] = false;
+                    alive[i] = false;
+
+                    // Close the connection and free space
+                    cli_disconnect(room->Connfds[i]);
+                    Close(room->Connfds[i]);
+                    FD_CLR(room->Connfds[i], &rset_template);
+                    room->Connfds[i] = -1;
+
+                    Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                    if (Game6_winnergroup) break;
+                }
+                else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+            }
+            printf("Game6 check 3.1 END====\n\n");
+            broadcastMSG(room, "0"); 
+            sleep(1); 
+        }
         else {
             // 守衛要守護誰?
             bzero(&recvline, MAXLINE);
@@ -793,11 +886,16 @@ int Game6(int roomID, Room_t* room) {
             if (n <= 0) { // client guard leave
                 room->onlineCount--;
                 room->onlineStatus[guard] = false;
+                alive[guard] = false;
 
                 // Close the connection and free space
                 cli_disconnect(room->Connfds[guard]);
                 Close(room->Connfds[guard]);
+                FD_CLR(room->Connfds[guard], &rset_template);
                 room->Connfds[guard] = -1;
+
+                Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                if (Game6_winnergroup) break;
             }
             else {
                 safed = atoi(recvline);
@@ -805,6 +903,31 @@ int Game6(int roomID, Room_t* room) {
                 bzero(&sendline, MAXLINE);
                 sprintf(sendline, "%d", safed);
                 // 回傳ack
+                rset = rset_template;
+                timeOut = timeOut_template;
+                numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+                printf("\nGame6 check 3.2: %d ready\n", numFdReady);
+                for (int i = 0; i < 6; i++) {
+                    if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+                    bzero(&recvline, MAXLINE);
+                    n = read(room->Connfds[i], recvline, MAXLINE);
+                    if (n <= 0) {
+                        room->onlineCount--;
+                        room->onlineStatus[i] = false;
+                        alive[i] = false;
+
+                        // Close the connection and free space
+                        cli_disconnect(room->Connfds[i]);
+                        Close(room->Connfds[i]);
+                        FD_CLR(room->Connfds[i], &rset_template);
+                        room->Connfds[i] = -1;
+
+                        Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                        if (Game6_winnergroup) break;
+                    }
+                    else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+                }
+                printf("Game6 check 3.2 END====\n\n");
                 broadcastMSG(room, sendline);
                 sleep(1);
             }
@@ -817,16 +940,47 @@ int Game6(int roomID, Room_t* room) {
         sleep(2);
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "666 %d 1 1 %d %d", round, wolfs[0], wolfs[1]); // wolf time
+        rset = rset_template;
+        timeOut = timeOut_template;
+        numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+        printf("\nGame6 check 4: %d ready\n", numFdReady);
+        for (int i = 0; i < 6; i++) {
+            if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[i], recvline, MAXLINE);
+            if (n <= 0) {
+                room->onlineCount--;
+                room->onlineStatus[i] = false;
+                alive[i] = false;
+
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[i]);
+                Close(room->Connfds[i]);
+                FD_CLR(room->Connfds[i], &rset_template);
+                room->Connfds[i] = -1;
+
+                Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                if (Game6_winnergroup) break;
+            }
+            else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+        }
+        printf("Game6 check 4 END====\n\n");
         broadcastMSG(room, sendline);
 
         // get wolf decision
         printf("Wolf 的決定是?\n");
         bool hasKill = false;
-        maxfdp1 = -1;
-        FD_ZERO(&rset);
-        if (alive[wolfs[0]]) FD_SET(room->Connfds[wolfs[0]], &rset);
-        if (alive[wolfs[1]]) FD_SET(room->Connfds[wolfs[1]], &rset);
+
         while (!hasKill) {
+            FD_ZERO(&rset);
+            if (alive[wolfs[0]]) FD_SET(room->Connfds[wolfs[0]], &rset);
+            if (alive[wolfs[1]]) FD_SET(room->Connfds[wolfs[1]], &rset);
+            if (alive[civilians[0]]) FD_SET(room->Connfds[civilians[0]], &rset);
+            if (alive[civilians[1]]) FD_SET(room->Connfds[civilians[1]], &rset);
+            if (alive[seer]) FD_SET(room->Connfds[seer], &rset);
+            if (alive[guard]) FD_SET(room->Connfds[guard], &rset);
+
+            numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
             if (!alive[wolfs[0]]) { if (!FD_ISSET(room->Connfds[wolfs[1]], &rset)) continue; }
             else if (!alive[wolfs[1]]) { if (!FD_ISSET(room->Connfds[wolfs[0]], &rset)) continue; }
             else { // 2 wolf alive
@@ -839,6 +993,20 @@ int Game6(int roomID, Room_t* room) {
             if (FD_ISSET(room->Connfds[wolfs[1]], &rset)) {
                 bzero(&recvline, MAXLINE);
                 n = read(room->Connfds[wolfs[1]], recvline, MAXLINE);
+                if (n <= 0) {
+                    room->onlineCount--;
+                    room->onlineStatus[wolfs[1]] = false;
+                    alive[wolfs[1]] = false;
+
+                    // Close the connection and free space
+                    cli_disconnect(room->Connfds[wolfs[1]]);
+                    Close(room->Connfds[wolfs[1]]);
+                    FD_CLR(room->Connfds[wolfs[1]], &rset_template);
+                    room->Connfds[wolfs[1]] = -1;
+
+                    Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                    if (Game6_winnergroup) break;
+                }
                 printf("read: %s (from %s)\n", recvline, room->players[wolfs[1]]);
                 killed = atoi(recvline);
                 hasKill = true;
@@ -846,25 +1014,125 @@ int Game6(int roomID, Room_t* room) {
             if (FD_ISSET(room->Connfds[wolfs[0]], &rset)) {
                 bzero(&recvline, MAXLINE);
                 n = read(room->Connfds[wolfs[0]], recvline, MAXLINE);
+                if (n <= 0) {
+                    room->onlineCount--;
+                    room->onlineStatus[wolfs[0]] = false;
+                    alive[wolfs[0]] = false;
+
+                    // Close the connection and free space
+                    cli_disconnect(room->Connfds[wolfs[0]]);
+                    Close(room->Connfds[wolfs[0]]);
+                    FD_CLR(room->Connfds[wolfs[0]], &rset_template);
+                    room->Connfds[wolfs[0]] = -1;
+
+                    Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                    if (Game6_winnergroup) break;
+                }
                 printf("read: %s (from %s)\n", recvline, room->players[wolfs[1]]);
                 killed = atoi(recvline);
                 hasKill = true;
             }
+            printf("\nGame6 check 5: %d ready\n", numFdReady - 2);
+            /*if (FD_ISSET(room->Connfds[seer], &rset)) {
+                bzero(&recvline, MAXLINE);
+                n = read(room->Connfds[seer], recvline, MAXLINE);
+                if (n <= 0) {
+                    room->onlineCount--;
+                    room->onlineStatus[seer] = false;
+                    alive[seer] = false;
+
+                    // Close the connection and free space
+                    cli_disconnect(room->Connfds[seer]);
+                    Close(room->Connfds[seer]);
+                    FD_CLR(room->Connfds[seer], &rset_template);
+                    room->Connfds[seer] = -1;
+                }
+                else printf("player %d (%s): %s\n", seer + 1, room->players[seer], recvline);
+            }
+            if (FD_ISSET(room->Connfds[guard], &rset)) {
+                bzero(&recvline, MAXLINE);
+                n = read(room->Connfds[guard], recvline, MAXLINE);
+                if (n <= 0) {
+                    room->onlineCount--;
+                    room->onlineStatus[guard] = false;
+                    alive[guard] = false;
+
+                    // Close the connection and free space
+                    cli_disconnect(room->Connfds[guard]);
+                    Close(room->Connfds[guard]);
+                    FD_CLR(room->Connfds[guard], &rset_template);
+                    room->Connfds[guard] = -1;
+                }
+                else printf("player %d (%s): %s\n", guard + 1, room->players[guard], recvline);
+            }
+            if (FD_ISSET(room->Connfds[civilians[0]], &rset)) {
+                bzero(&recvline, MAXLINE);
+                n = read(room->Connfds[civilians[0]], recvline, MAXLINE);
+                if (n <= 0) {
+                    room->onlineCount--;
+                    room->onlineStatus[civilians[0]] = false;
+                    alive[civilians[0]] = false;
+
+                    // Close the connection and free space
+                    cli_disconnect(room->Connfds[civilians[0]]);
+                    Close(room->Connfds[civilians[0]]);
+                    FD_CLR(room->Connfds[civilians[0]], &rset_template);
+                    room->Connfds[civilians[0]] = -1;
+                }
+                else printf("player %d (%s): %s\n", civilians[0] + 1, room->players[civilians[0]], recvline);
+            }
+            if (FD_ISSET(room->Connfds[civilians[1]], &rset)) {
+                bzero(&recvline, MAXLINE);
+                n = read(room->Connfds[civilians[1]], recvline, MAXLINE);
+                if (n <= 0) {
+                    room->onlineCount--;
+                    room->onlineStatus[civilians[1]] = false;
+                    alive[civilians[1]] = false;
+
+                    // Close the connection and free space
+                    cli_disconnect(room->Connfds[civilians[1]]);
+                    Close(room->Connfds[civilians[1]]);
+                    FD_CLR(room->Connfds[civilians[1]], &rset_template);
+                    room->Connfds[civilians[1]] = -1;
+                }
+                else printf("player %d (%s): %s\n", civilians[1] + 1, room->players[civilians[1]], recvline);
+            }*/
+            printf("Game6 check 5 END====\n\n");
         }
         printf("Round %d: wolfs kill - player %d (%s)\n", round, killed + 1, room->players[killed]);
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "%d", killed + 1);
+        rset = rset_template;
+        timeOut = timeOut_template;
+        numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+        printf("\nGame6 check 6: %d ready\n", numFdReady);
+        for (int i = 0; i < 6; i++) {
+            if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[i], recvline, MAXLINE);
+            if (n <= 0) {
+                room->onlineCount--;
+                room->onlineStatus[i] = false;
+                alive[i] = false;
+
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[i]);
+                Close(room->Connfds[i]);
+                FD_CLR(room->Connfds[i], &rset_template);
+                room->Connfds[i] = -1;
+
+                Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                if (Game6_winnergroup) break;
+            }
+            else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+        }
+        printf("Game6 check 6 END====\n\n");
         broadcastMSG(room, sendline);
         sleep(2);
 
         printf("Guard check: ");
-        if (killed == safed) {
-            printf("safe successful!\n");
-            killed = -1;
-        }
-        else {
-            printf("safe fail!\n");
-        }
+        if (killed == safed) { printf("safe successful!\n"); killed = -1; }
+        else { printf("safe fail!\n"); }
 
         //////////////////////////////////////////////////////////////////////
         // SEER
@@ -872,9 +1140,38 @@ int Game6(int roomID, Room_t* room) {
         printf("SEER 的決定是?\n");
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "666 %d 1 2 %d -1", round, seer); // seer time
+        rset = rset_template;
+        timeOut = timeOut_template;
+        numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+        printf("\nGame6 check 7: %d ready\n", numFdReady);
+        for (int i = 0; i < 6; i++) {
+            if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[i], recvline, MAXLINE);
+            if (n <= 0) {
+                room->onlineCount--;
+                room->onlineStatus[i] = false;
+                alive[i] = false;
+
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[i]);
+                Close(room->Connfds[i]);
+                FD_CLR(room->Connfds[i], &rset_template);
+                room->Connfds[i] = -1;
+
+                Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                if (Game6_winnergroup) break;
+            }
+            else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+        }
+        printf("Game6 check 7 END====\n\n");
         broadcastMSG(room, sendline);
             
-        if (!alive[seer]) { sleep(5); broadcastMSG(room, "2"); sleep(1); }
+        if (!alive[seer]) { 
+            sleep(5); 
+            broadcastMSG(room, "2"); 
+            sleep(1); 
+        }
         else {
             // 預言家要問誰?
             bzero(&recvline, MAXLINE);
@@ -882,11 +1179,16 @@ int Game6(int roomID, Room_t* room) {
             if (n <= 0) { // client seer leave
                 room->onlineCount--;
                 room->onlineStatus[seer] = false;
+                alive[seer] = false;
                 
                 // Close the connection and free space
                 cli_disconnect(room->Connfds[seer]);
                 Close(room->Connfds[seer]);
+                FD_CLR(room->Connfds[seer], &rset_template);
                 room->Connfds[seer] = -1;
+
+                Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                if (Game6_winnergroup) break;
             }
             else {
                 int asked = atoi(recvline);
@@ -896,6 +1198,31 @@ int Game6(int roomID, Room_t* room) {
                 sprintf(sendline, "%d", (asked == wolfs[0] || asked == wolfs[1]) ? 0 : 1);
                 // bad: 0, good: 1
                 // 回傳結果
+                rset = rset_template;
+                timeOut = timeOut_template;
+                numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+                printf("\nGame6 check 8: %d ready\n", numFdReady);
+                for (int i = 0; i < 6; i++) {
+                    if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+                    bzero(&recvline, MAXLINE);
+                    n = read(room->Connfds[i], recvline, MAXLINE);
+                    if (n <= 0) {
+                        room->onlineCount--;
+                        room->onlineStatus[i] = false;
+                        alive[i] = false;
+
+                        // Close the connection and free space
+                        cli_disconnect(room->Connfds[i]);
+                        Close(room->Connfds[i]);
+                        FD_CLR(room->Connfds[i], &rset_template);
+                        room->Connfds[i] = -1;
+
+                        Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                        if (Game6_winnergroup) break;
+                    }
+                    else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+                }
+                printf("Game6 check 8 END====\n\n");
                 broadcastMSG(room, sendline);
                 sleep(1);
             }
@@ -905,6 +1232,31 @@ int Game6(int roomID, Room_t* room) {
         printf("\x1B[0;33m\n天亮了\n\x1B[0m");
         bzero(&sendline, MAXLINE);
         sprintf(sendline, "%d", killed + 1);
+        rset = rset_template;
+        timeOut = timeOut_template;
+        numFdReady = Select(maxfdp1, &rset, NULL, NULL, &timeOut);
+        printf("\nGame6 check 9: %d ready\n", numFdReady);
+        for (int i = 0; i < 6; i++) {
+            if (!room->onlineStatus[i] || !FD_ISSET(room->Connfds[i], &rset)) continue;
+            bzero(&recvline, MAXLINE);
+            n = read(room->Connfds[i], recvline, MAXLINE);
+            if (n <= 0) {
+                room->onlineCount--;
+                room->onlineStatus[i] = false;
+                alive[i] = false;
+
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[i]);
+                Close(room->Connfds[i]);
+                FD_CLR(room->Connfds[i], &rset_template);
+                room->Connfds[i] = -1;
+
+                Game6_winnergroup = Game6_EndCheck(charactor, alive);
+                if (Game6_winnergroup) break;
+            }
+            else printf("player %d (%s): %s\n", i + 1, room->players[i], recvline);
+        }
+        printf("Game6 check 9 END====\n\n");
         broadcastMSG(room, sendline);
         printf("殺人結果已送出\n");
         sleep(2);
@@ -913,12 +1265,63 @@ int Game6(int roomID, Room_t* room) {
         Game6_winnergroup = Game6_EndCheck(charactor, alive);
         if (Game6_winnergroup) break;
 
+    // msg exchange
+    /*
+    int maxfdp1, numFdReady;
+    fd_set rset;
+
+    while (true && !room->gameEnd) {
+        maxfdp1 = -1;
+        FD_ZERO(&rset);
+        for (int i = 0; i < room->capacity; i++) {
+            if (room->Connfds[i] == -1) continue;
+            FD_SET(room->Connfds[i], &rset);
+            maxfdp1 = max(maxfdp1, room->Connfds[i] + 1);
+        }
+
+        numFdReady = Select(maxfdp1, &rset, NULL, NULL, NULL);
+        // check every client
+        for (int i = 0; i < room->capacity; i++) {
+            if (room->Connfds[i] == -1 || !FD_ISSET(room->Connfds[i], &rset)) continue;
+
+            bzero(&sendline, sizeof(sendline));
+            bzero(&recvline, sizeof(recvline));
+            if (!read(room->Connfds[i], recvline, sizeof(recvline))) {
+                // client i leave...
+                room->onlineCount--;
+                room->onlineStatus[i] = false;
+                
+                // Close the connection and free space
+                cli_disconnect(room->Connfds[i]);
+                Close(room->Connfds[i]);
+                room->Connfds[i] = -1;
+
+
+                bzero(&sendline, sizeof(sendline));
+                // if (room->onlineCount == 0) room->gameEnd = true;
+                if (room->onlineCount <= 1) sprintf(sendline, "(%s left the room. You are the last one. Press Ctrl+D to leave or wait for a new user.\n)", room->players[i]);
+                else sprintf(sendline, "(%s left the room. %d users left)\n", room->players[i], room->onlineCount);
+
+                for (int j = 0; j < room->capacity; j++) {
+                    if (i != j && room->Connfds[j] != -1) Writen(room->Connfds[j], sendline, strlen(sendline));
+                } 
+            }
+            else {
+                sprintf(sendline, "(%s) %s\n", room->players[i], recvline);
+                printf("write msg: %s", sendline);
+                for (int j = 0; j < room->capacity; j++) {
+                    if (i != j && room->Connfds[j] != -1) Writen(room->Connfds[j], sendline, strlen(sendline));
+                }
+            }
+        }
+    }*/
+
         round++;
-        // if (round == 5) break;
     }
     bzero(&sendline, MAXLINE);
     sprintf(sendline, "667 %d 1 0", Game6_winnergroup); // end game code: 667
     broadcastMSG(room, sendline);
+    return (Game6_winnergroup == 1); 
 }
 
 
