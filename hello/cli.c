@@ -19,7 +19,7 @@ void signalHandle(int sig_num) {
 }
 
 int main(int argc, char** argv) {
-    // signal(SIGINT, signalHandle);
+    signal(SIGINT, signalHandle);
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <server IP> <server port>\n", argv[0]);
         exit(1);
@@ -680,7 +680,7 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
                 break;
             }
             int a = atoi(recvline);
-            printf("player %d OUT\n", a + 1);
+            printf("player %d OUT\n", a);
             a--;
             alive[a] = false;
             if (a == my_i) my_alive = false;
