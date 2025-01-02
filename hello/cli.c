@@ -628,6 +628,7 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
                 }
             }
         }
+        fflush(stdin);
 
         //////////////voting///////////////
         while(my_alive){
@@ -659,6 +660,8 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
             }
         }
 
+        fflush(stdin);
+
         struct timeval timeout;
         timeout.tv_sec = 0;
         timeout.tv_usec = 100000;
@@ -676,7 +679,7 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
             }
             int killed;
             sscanf(recvline, "%s %d %s", NULL, &killed, NULL);
-            printf("%s", recvline);
+            printf("player %d OUT", killed);
 
             killed--;
             alive[killed] = false;
