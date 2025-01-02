@@ -630,7 +630,7 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
         }
 
         //////////////voting///////////////
-        while(1){
+        while(my_alive){
             fd_set read_fds;
             FD_ZERO(&read_fds);
             FD_SET(sock_fd, &read_fds);
@@ -674,12 +674,13 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
             if(n <= 0){
                 break;
             }
+            int killed;
+            sscanf(recvline, "%s %d %s", NULL, &killed, NULL);
             printf("%s", recvline);
 
-            if(strstr(recvline, "Out") != NULL){
-                my_alive = false;
-                alive[my_i];
-            }
+            killed--;
+            alive[killed] = false;
+            if (killed == my_i) my_alive = false;
         }
 
         ///////End////////
