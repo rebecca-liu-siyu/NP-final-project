@@ -662,9 +662,11 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
 
         fflush(stdin);
 
+        sleep(2);
+
         struct timeval timeout;
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 100000;
+        timeout.tv_sec = 3;
+        timeout.tv_usec = 0;
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(sock_fd, &read_fds);
@@ -677,13 +679,11 @@ int Game6(int sock_fd, FILE* fp, const char* username) {
             if(n <= 0){
                 break;
             }
-            int killed;
-            sscanf(recvline, "%s %d %s", NULL, &killed, NULL);
-            printf("player %d OUT", killed);
-
-            killed--;
-            alive[killed] = false;
-            if (killed == my_i) my_alive = false;
+            int a = atoi(recvline);
+            printf("player %d OUT\n", a + 1);
+            a--;
+            alive[a] = false;
+            if (a == my_i) my_alive = false;
         }
 
         ///////End////////
